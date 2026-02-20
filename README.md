@@ -246,7 +246,7 @@ El juego usa **sprite sheets** para renderizado eficiente de animaciones:
 - Frame 0-2: Inicio de explosión (pequeña)
 - Frame 3-6: Expansión máxima (grande, brillante)  
 - Frame 7-10: Disipación (se desvanece)
-- FPS: 30 frames por segundo → animación dura ~0.37 segundos
+- Duración de frame: 60ms → animación completa dura ~660ms (11 × 60ms)
 
 **Algoritmo de extracción:**
 ```java
@@ -311,14 +311,25 @@ Ambos sprite sheets (explosión y trail) usan **el mismo patrón**: tiras horizo
 
 **Renderizado con ciclo de animación:**
 ```java
-// Selecciona frame basado en velocidad de nave
-int frame = (int)((velocity * 2) % 8);
-BufferedImage trailFrame = trailFrames[frame];
+// GameView.drawShipTrail() — implementación real
+double speed = Math.sqrt(vel.x * vel.x + vel.y * vel.y);
+double speedRatio = Math.min(speed / 8.0, 1.0);
+double scaleFactor = 0.3 + (speedRatio * 0.7); // 0.3 (parado) → 1.0 (velocidad máxima)
+if (speedRatio < 0.05) return; // No mostrar si casi parado
 
-// Dibuja detrás de la nave, rotado según orientación
-g2d.rotate(ship.getRotationAngle());
-g2d.drawImage(trailFrame, x, y, null);
+// Avanzar frame cada 50ms (independiente de velocidad)
+if (currentTime - lastFrameTime > 50) {
+    trailFrame = (trailFrame + 1) % 8;
+    lastFrameTime = currentTime;
+}
+
+// Posicionar en la cola de la nave, rotado igual que la nave
+g2d.translate(x_cola, y_cola);
+g2d.rotate(shipAngle + Math.PI / 2);
+g2d.drawImage(fireTrailFrames[trailFrame], -w/2, -h/2, w, h, null);
 ```
+
+> **Nota**: La velocidad afecta el **tamaño** (scale 0.3→1.0), no la velocidad de animación. El ciclo de frames siempre avanza a 50ms/frame.
 
 **Creación de tu propio sprite sheet:**
 - Software recomendado: Adobe Photoshop, GIMP, Aseprite
@@ -328,7 +339,7 @@ g2d.drawImage(trailFrame, x, y, null);
 
 ### 🚀 Ship Sprite
 
-**Archivo**: `resources/sprites/ship/ship.png`
+**Archivo**: `resources/sprites/ship/ship_red.png`
 
 **Características:**
 - Imagen única de nave (no animada)
@@ -338,7 +349,7 @@ g2d.drawImage(trailFrame, x, y, null);
 
 ### 🎯 Projectile Sprite
 
-**Archivo**: `resources/sprites/projectile/projectile.png`
+**Archivo**: `resources/sprites/projectile/laserBlue14.png`
 
 **Características:**
 - Sprite pequeño para proyectiles
@@ -509,7 +520,7 @@ chmod +x run_p2p_demo.sh
 **Opción 2: Lanzar instancias manualmente**
 ```bash
 # Compilar
-javac -d bin -sourcepath src src/GameMain.java src/controller/*.java src/model/*.java src/model/network/*.java src/model/generators/*.java src/view/*.java
+javac -d bin -sourcepath src src/GameMain.java src/controller/*.java src/model/*.java src/model/network/*.java src/services/*.java src/view/*.java
 
 # Instancia 1 (Jugador 1)
 java -cp bin GameMain 8888
@@ -568,45 +579,81 @@ Nueva nave remota añadida: LocalShip_1708415236789
 
 ## 🏗️ Arquitectura del Proyecto
 
+El proyecto sigue **MVC estricto** con capa de servicios separada. Todos los métodos que necesitan el tiempo actual lo reciben como parámetro (`long currentTime`) — no se llama `System.currentTimeMillis()` dentro del modelo.
+
 ```
 src/
-├── GameMain.java                    # Punto de entrada, configuración de puerto P2P
+├── GameMain.java                    # Punto de entrada, configura puerto P2P e inyecta initTime
 ├── controller/
-│   ├── GameController.java          # Controlador principal + integración P2P
-│   └── NetworkController.java       # Comunicación UDP multicast
+│   ├── GameController.java          # Controlador principal: game loop, input, integración P2P
+│   │                                # Usa Swing Timer para nextLevel (no java.util.Timer)
+│   ├── GameLogic.java               # ★ NUEVO: Toda la lógica de negocio extraída del modelo
+│   │                                #   checkPackagePickup/Delivery, shootProjectile,
+│   │                                #   checkProjectileCollision, nextLevel, restartGame,
+│   │                                #   spawnAsteroidsOverTime, splitAsteroid
+│   └── NetworkController.java       # Comunicación UDP multicast (3 hilos: main/receiver/heartbeat)
 ├── model/
-│   ├── GameModel.java               # Estado del juego + gestión de naves remotas
-│   ├── Ship.java                    # Nave espacial con props P2P
-│   ├── Asteroid.java                # Asteroides con tipos SMALL/MEDIUM/LARGE
+│   ├── IGameModel.java              # ★ NUEVO: Interfaz de solo lectura para la Vista
+│   │                                #   getPlayerShip(), getPlanets(), getRemainingTime(long),
+│   │                                #   getRemoteShips(), getExplosionPositions/Sizes(), etc.
+│   ├── GameModel.java               # Estado puro del juego (sin lógica, sin timers internos)
+│   │                                #   Constructor: GameModel(width, height, initTime)
+│   │                                #   getRemainingTime(long) en vez de campo calculado
+│   ├── Ship.java                    # Nave espacial; isImmune(long), shoot(long), canShoot(long)
+│   ├── Asteroid.java                # Asteroides con tipos SMALL/MEDIUM/LARGE/CHASER
 │   ├── Planet.java                  # Planetas destino
 │   ├── Package.java                 # Paquetes NORMAL/URGENT/HEAVY
 │   ├── Projectile.java              # Proyectiles de la nave
-│   ├── Explosion.java               # Sistema de explosiones animadas
 │   ├── FloatingText.java            # Textos flotantes (puntos, mensajes)
-│   ├── ScoreManager.java            # Sistema de puntuación y combos
 │   ├── LevelObjective.java          # Objetivos de misión
-│   ├── generators/
-│   │   ├── LevelGenerator.java      # Generación procedural de niveles
-│   │   └── GameData.java            # Contenedor de datos de nivel
 │   └── network/
 │       ├── PeerInfo.java            # Información de peers
 │       └── NetworkMessage.java      # Mensajes P2P serializables
+├── services/
+│   ├── PhysicsService.java          # Movimiento, colisiones, wraparound, boost
+│   │                                #   updateShipPhysics, applyThrust, applyRotation,
+│   │                                #   applyBrake, updateBoost, checkShip*Collision
+│   ├── LevelGenerator.java          # Generación procedural de niveles
+│   │                                #   WORLD GENERATOR (líneas 69-210): planetas con patrones
+│   │                                #   LIFE GENERATOR  (líneas 215-280): cinturones de asteroides
+│   ├── CollisionService.java        # Detección de colisiones de alto nivel
+│   ├── CameraService.java           # Cámara y viewport
+│   ├── LevelService.java            # Lógica de nivel y objetivos
+│   ├── ScoreService.java            # Puntuación y combos
+│   ├── SpawnService.java            # Spawn de paquetes y asteroides
+│   └── GameData.java                # Contenedor de datos de nivel generado
 └── view/
-    ├── GameView.java                # Renderizado principal + sprites
+    ├── GameView.java                # Renderizado principal + sprites; implementa IGameModel
     ├── Viewer.java                  # Lógica de cámara y viewport
     └── ControlPanel.java            # Panel de controles (legacy)
 
 resources/
 └── sprites/
     ├── explosion/
-    │   └── explosion.png            # 8×8 grid, 11 frames usados
+    │   └── Explosion Animation.png  # Tira horizontal 1×11, 704×64px (11 frames de 64×64px)
     ├── ship/
-    │   └── ship.png                 # Sprite de nave jugador
+    │   └── ship_red.png             # Sprite de nave jugador (escalado al 60%)
     ├── trail/
-    │   └── fire_trail.png           # 8 frames de estela
-    └── projectile/
-        └── projectile.png           # Sprite de proyectil
+    │   └── Group 4 - 4.png          # Tira horizontal 1×8, 256×48px (8 frames de 32×48px)
+    ├── asteroid/
+    │   ├── meteorGrey_big{1-4}.png  # 4 variantes de asteroide grande
+    │   ├── meteorGrey_med{1-2}.png  # 2 variantes de asteroide mediano
+    │   └── meteorGrey_small{1-2}.png# 2 variantes de asteroide pequeño
+    ├── projectile/
+    │   └── laserBlue14.png          # Sprite de proyectil
+    └── background/
+        └── Space01.png              # Fondo espacial (tiling con parallax 0.5×)
 ```
+
+### Principios MVC aplicados
+
+| Principio | Implementación |
+|---|---|
+| **Modelo sin tiempo** | Todos los métodos reciben `long currentTime` como parámetro |
+| **Modelo sin timers** | `java.util.Timer` eliminado; `nextLevel` usa `Swing Timer` en controlador |
+| **Vista sin lógica** | `GameView` implementa `IGameModel` (interfaz de solo lectura) |
+| **Lógica separada** | `GameLogic.java` contiene toda la lógica de negocio extraída de `GameModel` |
+| **Física separada** | `PhysicsService` maneja todo el movimiento y colisiones |
 
 ## 🛠️ Compilación y Ejecución
 
@@ -618,7 +665,7 @@ resources/
 ### Compilar
 ```bash
 cd "c:\Users\busca\OneDrive\Desktop\Bolas v.1 - copia"
-javac -d bin -sourcepath src src\GameMain.java src\controller\*.java src\model\*.java src\model\network\*.java src\model\generators\*.java src\view\*.java
+javac -d bin -sourcepath src src\GameMain.java src\controller\*.java src\model\*.java src\model\network\*.java src\services\*.java src\view\*.java
 ```
 
 ### Ejecutar (Un jugador)
@@ -700,6 +747,32 @@ java -cp bin GameMain 8889
 
 ### Problema: Lag en movimiento de naves remotas
 **Solución**: Normal en WiFi con latencia > 50ms. La interpolación compensa hasta 100ms.
+
+## 📝 Historial de Cambios
+
+### Refactoring MVC (commit `08bee12`)
+
+**Problema → Solución:**
+
+| # | Problema detectado | Solución aplicada |
+|---|---|---|
+| 1 | `GameModel` contenía lógica de negocio | Extraída a `GameLogic.java` (controller layer) |
+| 2 | `System.currentTimeMillis()` dentro del modelo (10+ llamadas) | Eliminadas, tiempo inyectado como `long currentTime` en todos los métodos |
+| 3 | `java.util.Timer` en modelo para `nextLevel` | Reemplazado por `Swing Timer` en `GameController` |
+| 4 | Acoplamiento fuerte Vista→Modelo | Añadida interfaz `IGameModel` (solo lectura) que `GameView` consume |
+| 5 | Vista accedía a `GameModel` directamente | `GameView(IGameModel model)` — depende solo de la interfaz |
+
+**Archivos nuevos:**
+- `src/model/IGameModel.java` — contrato de solo lectura para la Vista
+- `src/controller/GameLogic.java` — toda la lógica de negocio (600+ líneas extraídas)
+
+**Archivos modificados:**
+- `src/model/GameModel.java` — reducido de 895 → 425 líneas (estado puro)
+- `src/controller/GameController.java` — usa `logic.*`, Swing Timer, `clearExplosions()` tras cada repaint
+- `src/view/GameView.java` — acepta `IGameModel`, usa `getExplosionPositions/Sizes()` (snapshot)
+- `src/GameMain.java` — `new GameModel(800, 600, initTime)` inyectando tiempo inicial
+
+---
 
 ## 🎉 Créditos y Licencia
 
