@@ -8,6 +8,10 @@ import java.util.Random;
 
 /**
  * Generador procedural de niveles con dificultad progresiva.
+ * 
+ * Este archivo contiene:
+ * - WORLD GENERATOR: Generación de planetas con patrones (líneas 69-210)
+ * - LIFE GENERATOR: Generación de asteroides en cinturones (líneas 215-280)
  */
 public class LevelGenerator {
     private int currentLevel;
@@ -63,8 +67,16 @@ public class LevelGenerator {
         return new GameData(planets, asteroids, packages, playerStart);
     }
     
+    // ==================== WORLD GENERATOR ====================
+    // Generación procedural de planetas con patrones diferentes
+    // Los planetas siempre están en los mismos sitios porque el patrón
+    // es determinista, pero los COLORES/NOMBRES cambian porque se asignan
+    // secuencialmente desde arrays predefinidos (PLANET_NAMES, PLANET_COLORS)
+    // ==========================================================
+    
     /**
      * Genera planetas con patrones variados (WorldGenerator).
+     * El patrón cambia cada 4 niveles: anillo, espiral, cruz, aleatorio.
      */
     private List<model.Planet> generatePlanets(int count) {
         List<model.Planet> planets = new ArrayList<>();
@@ -209,8 +221,15 @@ public class LevelGenerator {
         return planets;
     }
     
+    // ==================== LIFE GENERATOR ====================
+    // Generación procedural de asteroides (vida del nivel)
+    // Los asteroides se organizan en cinturones y respawnean
+    // cuando son destruidos (ver GameModel.checkProjectileCollisions)
+    // ==========================================================
+    
     /**
-     * Genera asteroides agrupados en cinturones.
+     * Genera asteroides agrupados en cinturones (LifeGenerator).
+     * Crea 2-3 cinturones con asteroides distribuidos aleatoriamente.
      */
     private List<model.Asteroid> generateAsteroids(int count, int level) {
         List<model.Asteroid> asteroids = new ArrayList<>();
