@@ -68,14 +68,15 @@ public class GameView extends JPanel {
     
     /**
      * Representa una animación de explosión temporal.
-     * La explosión se renderiza extrayendo frames de un sprite sheet 8x8 (11 frames totales).
+     * La explosión se renderiza extrayendo frames de un sprite sheet horizontal (tira 1×11).
+     * Archivo: Explosion Animation.png (704×64px, 11 frames de 64×64px).
      */
     private static class ExplosionAnimation {
         double x, y;
         int frame;
         long startTime;
         double scale; // Escala según tamaño del asteroide
-        static final int TOTAL_FRAMES = 11; // 11 imágenes en grid 8x8
+        static final int TOTAL_FRAMES = 11; // 11 frames en tira horizontal
         static final long FRAME_DURATION = 60; // ms por frame
         
         ExplosionAnimation(double x, double y, double scale) {
@@ -143,18 +144,19 @@ public class GameView extends JPanel {
             projectileFrames = new BufferedImage[1];
             projectileFrames[0] = ImageIO.read(new File("resources/sprites/projectile/laserBlue14.png"));
             
-            // Explosión (sprite sheet)
+            // Explosión (sprite sheet horizontal 1×11: 704×64px, frames de 64×64px)
             explosionSheet = ImageIO.read(new File("resources/sprites/explosion/Explosion Animation.png"));
             
             // Fondo
             backgroundImage = ImageIO.read(new File("resources/sprites/background/Space01.png"));
             
-            // Trail de fuego (sprite sheet con 8 frames)
+            // Trail de fuego (sprite sheet horizontal 1×8: 256×48px, frames de 32×48px)
             BufferedImage trailSheet = ImageIO.read(new File("resources/sprites/trail/Group 4 - 4.png"));
             if (trailSheet != null) {
                 fireTrailFrames = new BufferedImage[8];
-                int frameWidth = trailSheet.getWidth() / 8;
+                int frameWidth = trailSheet.getWidth() / 8;  // 256 ÷ 8 = 32px por frame
                 for (int i = 0; i < 8; i++) {
+                    // Extrae cada frame de la tira horizontal
                     fireTrailFrames[i] = trailSheet.getSubimage(i * frameWidth, 0, frameWidth, trailSheet.getHeight());
                 }
             }
@@ -673,20 +675,16 @@ public class GameView extends JPanel {
             int x = (int)exp.x + camX;
             int y = (int)exp.y + camY;
             
-            // 11 frames, cada uno de 64x64 píxeles exactos
+            // 11 frames, cada uno de 64x64 píxeles en tira horizontal
             if (exp.frame >= 11) continue;
             
-            // Calcular posición en el grid 8x8 (pero solo hay 11 frames)
-            int cols = 8;
-            int row = exp.frame / cols;
-            int col = exp.frame % cols;
-            
-            // Coordenadas exactas: cada frame es 64x64
-            int srcX = col * 64;
-            int srcY = row * 64;
+            // Calcular offset en la tira horizontal (704×64px)
+            // Frame 0: x=0, Frame 1: x=64, Frame 2: x=128, ... Frame 10: x=640
+            int srcX = exp.frame * 64;  // Offset horizontal (0, 64, 128, 192...)
+            int srcY = 0;                // Siempre 0 (una sola fila)
             
             try {
-                // Recortar exactamente 64x64 píxeles
+                // Recortar frame de 64×64 píxeles de la tira horizontal
                 BufferedImage frame = explosionSheet.getSubimage(srcX, srcY, 64, 64);
                 
                 // Tamaño adaptado al meteorito
