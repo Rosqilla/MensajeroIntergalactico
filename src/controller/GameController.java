@@ -19,7 +19,7 @@ import java.awt.event.MouseListener;
  * Controlador del juego que gestiona la entrada de teclado y el ciclo de actualización.
  * Controles arcade: WASD/Flechas para 8 direcciones, SHIFT/SPACE para boost.
  * Incluye sincronización P2P con NetworkController.
- * REFACTORIZADO: Usa capa de servicios para separar lógica de negocio.
+ * REFACTORIZADO: Usa capa de servicios + GameLogic para separar lógica de negocio.
  */
 public class GameController implements KeyListener, MouseListener, NetworkController.NetworkListener {
     private final GameModel model;
@@ -33,6 +33,10 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
     private final SpawnService spawner;
     private final ScoreService scores;
     private final CameraService camera;
+    private final GameLogic logic; // Lógica de negocio extraída del modelo
+    
+    // Timer para avance de nivel (reemplaza java.util.Timer del modelo)
+    private Timer nextLevelTimer;
     
     // Estado de las teclas presionadas
     private boolean upPressed = false;
@@ -64,8 +68,9 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
         this.scores = new ScoreService();
         this.camera = new CameraService();
         this.collisions = new CollisionService(physics, scores, spawner);
+        this.logic = new GameLogic();
         
-        System.out.println("[MVC] Capa de servicios inicializada");
+        System.out.println("[MVC] Capa de servicios + GameLogic inicializada");
         
         // Inicializar NetworkController
         try {
@@ -179,7 +184,7 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
             if (shipCollision.collision) {
                 scores.resetCombo();
                 if (shipCollision.shipDestroyed) {
-                    model.triggerGameOver(currentTime);
+                    logic.triggerGameOver(model, currentTime);
                 }
             }
         }
@@ -195,8 +200,8 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
         // 7. Orquestar lógica de juego (MVC - Controller orquesta, modelo NO se auto-actualiza)
         if (!model.isGameOver()) {
             // Verificar condiciones de Game Over
-            if (playerShip != null && (playerShip.getLives() <= 0 || model.getRemainingTime() <= 0)) {
-                model.triggerGameOver(currentTime);
+            if (playerShip != null && (playerShip.getLives() <= 0 || model.getRemainingTime(currentTime) <= 0)) {
+                logic.triggerGameOver(model, currentTime);
             } else {
                 // Limpiar proyectiles inactivos
                 model.getProjectiles().removeIf(p -> !p.isActive());
@@ -207,9 +212,18 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
                 // Verificar recogida y entrega de paquetes
                 if (playerShip != null) {
                     if (!playerShip.hasPackage()) {
-                        model.checkPackagePickup(currentTime);
+                        logic.checkPackagePickup(model, currentTime);
                     } else {
-                        model.checkPackageDelivery(currentTime);
+                        boolean allCompleted = logic.checkPackageDelivery(model, currentTime);
+                        if (allCompleted && nextLevelTimer == null) {
+                            // Dar 2 segundos antes de pasar al siguiente nivel (Swing Timer, no java.util.Timer)
+                            nextLevelTimer = new Timer(2000, evt -> {
+                                logic.nextLevel(model, System.currentTimeMillis());
+                                nextLevelTimer = null;
+                            });
+                            nextLevelTimer.setRepeats(false);
+                            nextLevelTimer.start();
+                        }
                     }
                 }
                 
@@ -217,14 +231,13 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
                 model.getPackages().removeIf(pkg -> !pkg.isCollected() && pkg.isExpired(currentTime));
                 
                 // Regenerar paquetes faltantes
-                model.checkAndRegeneratePackages(currentTime);
+                logic.checkAndRegeneratePackages(model, currentTime);
                 
                 // Generar asteroides periódicamente
-                model.spawnAsteroidsOverTime(currentTime);
+                logic.spawnAsteroidsOverTime(model, currentTime);
                 
                 // Verificar colisiones (proyectiles-asteroides)
-                // TODO: Migrar a CollisionService
-                model.checkProjectileCollision(currentTime);
+                logic.checkProjectileCollision(model, currentTime);
             }
         }
         
@@ -233,6 +246,9 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
         
         // 9. Redibujar la vista
         view.repaint();
+        
+        // 10. Limpiar explosiones consumidas por la vista
+        model.clearExplosions();
     }
     
     /**
@@ -265,7 +281,7 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
         
         // Disparo (SPACE) - permite disparo continuo con cooldown
         if (shootPressed) {
-            model.shootProjectile(currentTime);
+            logic.shootProjectile(model, currentTime);
         }
         
         // Activar/desactivar boost
@@ -279,7 +295,7 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
         // Si el juego terminó, manejar solo ENTER y ESC
         if (model.isGameOver()) {
             if (key == KeyEvent.VK_ENTER) {
-                model.restartGame();
+                logic.restartGame(model, System.currentTimeMillis());
             } else if (key == KeyEvent.VK_ESCAPE) {
                 System.exit(0);
             }
@@ -367,7 +383,7 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
             // Botón Volver a Jugar
             if (mouseX >= buttonX && mouseX <= buttonX + buttonWidth &&
                 mouseY >= playButtonY && mouseY <= playButtonY + buttonHeight) {
-                model.restartGame();
+                logic.restartGame(model, System.currentTimeMillis());
                 view.requestFocusInWindow();
             }
             

@@ -26,7 +26,7 @@ import java.util.Random;
  * Esta clase NO contiene lógica de juego, solo renderizado.
  */
 public class GameView extends JPanel {
-    private GameModel model;
+    private IGameModel model;
     private List<Star> stars;
     private Random random;
     
@@ -100,7 +100,7 @@ public class GameView extends JPanel {
      * 
      * @param model El modelo del juego a visualizar
      */
-    public GameView(GameModel model) {
+    public GameView(IGameModel model) {
         this.model = model;
         this.random = new Random();
         setPreferredSize(new Dimension(1200, 800));
@@ -647,9 +647,9 @@ public class GameView extends JPanel {
     }
     
     private void drawExplosions(Graphics2D g2d, int camX, int camY) {
-        // Agregar nuevas explosiones desde el modelo
-        List<java.awt.Point> newExplosions = model.getAndClearExplosions();
-        List<Integer> newSizes = model.getAndClearExplosionSizes();
+        // Agregar nuevas explosiones desde el modelo (snapshot de solo lectura)
+        List<java.awt.Point> newExplosions = model.getExplosionPositions();
+        List<Integer> newSizes = model.getExplosionSizes();
         for (int i = 0; i < newExplosions.size(); i++) {
             java.awt.Point pos = newExplosions.get(i);
             int radius = i < newSizes.size() ? newSizes.get(i) : 25;
@@ -777,7 +777,8 @@ public class GameView extends JPanel {
     }
     
     private void drawTimerPanel(Graphics2D g2d) {
-        int remaining = model.getRemainingTime();
+        long currentTime = System.currentTimeMillis();
+        int remaining = model.getRemainingTime(currentTime);
         boolean critical = remaining < 30;
         
         int width = 150;

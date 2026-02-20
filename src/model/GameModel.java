@@ -11,9 +11,12 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.Random;
 
 /**
- * Modelo principal del juego que gestiona la nave, planetas, asteroides y paquetes.
+ * Modelo principal del juego — holder de estado puro (patrón MVC).
+ * NO contiene lógica de negocio. Toda la lógica está en {@code controller.GameLogic}.
+ * NO llama a {@code System.currentTimeMillis()} — el tiempo se inyecta desde el controlador.
+ * Implementa {@link IGameModel} para exponer solo lectura a la vista.
  */
-public class GameModel {
+public class GameModel implements IGameModel {
     private Ship playerShip;
     private List<Planet> planets;
     private List<Asteroid> asteroids;
@@ -33,7 +36,6 @@ public class GameModel {
     private List<LevelObjective> levelObjectives;
     private boolean gameOver;
     private boolean gameWon;
-    private static final int MAX_LEVELS = 5;
     
     // Scoring por nivel
     private int damageReceivedThisLevel;
@@ -48,22 +50,18 @@ public class GameModel {
     // Sistema de puntuación y combos
     private ScoreManager scoreManager;
     
-    // Generación de paquetes
+    // Generación de paquetes (constantes usadas solo en GameLogic, campos usados como estado)
     private Random random;
-    private static final double MIN_SPAWN_DISTANCE = 200; // Distancia mínima de la nave
-    private static final double MAX_SPAWN_DISTANCE = 400; // Distancia máxima de la nave
-    private static final int PICKUP_RADIUS = 40; // Radio para recoger paquetes
-    
+
     // Sistema de aparición de asteroides
     private long lastAsteroidSpawn;
-    private static final long ASTEROID_SPAWN_INTERVAL = 1500; // 1.5 segundos    
     // Cooldown para mensajes de planeta incorrecto
     private long lastIncorrectPlanetMessageTime;
     
-    public GameModel(int width, int height) {
+    public GameModel(int width, int height, long initTime) {
         this.cameraOffset = new Point(0, 0);
         this.levelTime = 240; // Nivel 1: 240 segundos (4 minutos)
-        this.startTime = System.currentTimeMillis();
+        this.startTime = initTime;
         this.pausedTime = 0;
         this.paused = false;
         this.scoreManager = new ScoreManager();
@@ -78,16 +76,17 @@ public class GameModel {
         this.levelObjectives = new ArrayList<>();
         this.gameOver = false;
         this.damageReceivedThisLevel = 0;
-        this.lastAsteroidSpawn = System.currentTimeMillis();
+        this.lastAsteroidSpawn = initTime;
         
         // Inicializar nivel 1
-        loadLevel(1);
+        loadLevel(1, initTime);
     }
     
     /**
      * Carga un nivel usando el generador.
+     * Público para ser invocado desde GameLogic.
      */
-    private void loadLevel(int levelNumber) {
+    public void loadLevel(int levelNumber, long currentTime) {
         this.currentLevel = levelNumber;
         this.damageReceivedThisLevel = 0;
         
@@ -102,7 +101,7 @@ public class GameModel {
         generateLevelObjectives();
         
         // Generar paquetes solo para los objetivos
-        generatePackagesForObjectives();
+        generatePackagesForObjectives(currentTime);
         
         // [MVC] maxAsteroids eliminado - se gestiona en SpawnService
         
@@ -121,7 +120,7 @@ public class GameModel {
         if (levelNumber > 1) {
             levelTime += TIME_BONUS_PER_LEVEL;
         }
-        this.startTime = System.currentTimeMillis();
+        this.startTime = currentTime;
         this.pausedTime = 0;
         
         // Limpiar proyectiles
@@ -129,7 +128,7 @@ public class GameModel {
         floatingTexts.clear();
         
         // Mensaje de nivel
-        addFloatingText("NIVEL " + levelNumber, startPos.x, startPos.y - 50, Color.YELLOW, System.currentTimeMillis());
+        addFloatingText("NIVEL " + levelNumber, startPos.x, startPos.y - 50, Color.YELLOW, currentTime);
     }
     
     /**
@@ -151,7 +150,7 @@ public class GameModel {
     /**
      * Genera paquetes solo para los objetivos del nivel.
      */
-    private void generatePackagesForObjectives() {
+    private void generatePackagesForObjectives(long currentTime) {
         packages = new ArrayList<>();
         
         // Generar paquetes NORMALES requeridos para objetivos
@@ -166,7 +165,7 @@ public class GameModel {
                 double y = 900 + Math.sin(angle) * distance;
                 
                 // Solo paquetes NORMAL para objetivos
-                packages.add(new Package(x, y, targetPlanet, Package.PackageType.NORMAL, System.currentTimeMillis()));
+                packages.add(new Package(x, y, targetPlanet, Package.PackageType.NORMAL, currentTime));
             }
         }
         
@@ -183,512 +182,66 @@ public class GameModel {
             
             // Solo URGENTE o PESADO para bonus
             Package.PackageType type = random.nextBoolean() ? Package.PackageType.URGENT : Package.PackageType.HEAVY;
-            packages.add(new Package(x, y, targetPlanet, type, System.currentTimeMillis()));
+            packages.add(new Package(x, y, targetPlanet, type, currentTime));
         }
     }
     
     /**
      * Verifica que haya suficientes paquetes para cada objetivo y regenera si faltan.
      */
-    // [MVC] Métodos de lógica hechos públicos para orquestación desde GameController
-    public void checkAndRegeneratePackages(long currentTime) {
-        for (LevelObjective objective : levelObjectives) {
-            if (objective.isCompleted()) {
-                continue; // No regenerar para objetivos completados
-            }
-            
-            Planet targetPlanet = objective.getTargetPlanet();
-            
-            // Contar paquetes NORMALES disponibles (no entregados) para este planeta
-            long availablePackages = packages.stream()
-                .filter(pkg -> !pkg.isCollected() && 
-                              pkg.getTargetPlanet() == targetPlanet && 
-                              pkg.getType() == Package.PackageType.NORMAL)
-                .count();
-            
-            // Calcular cuántos paquetes faltan
-            int needed = objective.getRemaining();
-            int toGenerate = (int)(needed - availablePackages);
-            
-            // Regenerar paquetes faltantes (solo NORMAL)
-            for (int i = 0; i < toGenerate; i++) {
-                // Generar cerca de la nave pero a distancia segura
-                double angle = random.nextDouble() * 2 * Math.PI;
-                double distance = MIN_SPAWN_DISTANCE + random.nextDouble() * (MAX_SPAWN_DISTANCE - MIN_SPAWN_DISTANCE);
-                double x = playerShip.getX() + Math.cos(angle) * distance;
-                double y = playerShip.getY() + Math.sin(angle) * distance;
-                
-                // Solo paquetes NORMAL para objetivos
-                packages.add(new Package(x, y, targetPlanet, Package.PackageType.NORMAL, currentTime));
-                addFloatingText("¡Nuevo paquete!", x, y, Color.CYAN, currentTime);
-            }
-        }
-    }
+    // ========== Lógica de negocio EXTRAÍDA a controller.GameLogic ==========
     
-    /**
-     * Avanza al siguiente nivel.
-     */
-    public void nextLevel() {
-        // Calcular score del nivel
-        int levelScore = calculateLevelScore();
-        scoreManager.addScore(levelScore);
-        addFloatingText("¡Nivel Completado! +" + levelScore, 
-                       playerShip.getX(), playerShip.getY(), new Color(255, 215, 0), System.currentTimeMillis());
-        
-        // Verificar si completó el último nivel
-        if (currentLevel >= MAX_LEVELS) {
-            gameWon = true;
-            gameOver = true;
-            return;
-        }
-        
-        // Cargar siguiente nivel
-        loadLevel(currentLevel + 1);
-    }
-    
-    /**
-     * Genera asteroides periódicamente desde los bordes del mapa.
-     */
-    // [MVC] Método público para orquestación desde GameController
-    public void spawnAsteroidsOverTime(long currentTime) {
-        // Verificar si es tiempo de generar
-        if (currentTime - lastAsteroidSpawn < ASTEROID_SPAWN_INTERVAL) {
-            return;
-        }
-        
-        lastAsteroidSpawn = currentTime;
-        
-        // Generar más asteroides según el nivel (aumenta con niveles)
-        int count = 1 + currentLevel / 2;
-        for (int i = 0; i < count; i++) {
-            double x, y, velX, velY;
-            
-            // Velocidad base según nivel
-            double baseSpeed = 1.5 + (currentLevel * 0.3);
-            
-            // 70% de probabilidad de aparecer desde bordes, 30% entre planetas
-            if (random.nextDouble() < 0.7 || planets.isEmpty()) {
-                // Desde los bordes (como antes)
-                int edge = random.nextInt(4);
-                switch (edge) {
-                    case 0: // Arriba
-                        x = random.nextDouble() * 2400;
-                        y = -50;
-                        velX = (random.nextDouble() - 0.5) * baseSpeed;
-                        velY = baseSpeed;
-                        break;
-                    case 1: // Derecha
-                        x = 2450;
-                        y = random.nextDouble() * 1800;
-                        velX = -baseSpeed;
-                        velY = (random.nextDouble() - 0.5) * baseSpeed;
-                        break;
-                    case 2: // Abajo
-                        x = random.nextDouble() * 2400;
-                        y = 1850;
-                        velX = (random.nextDouble() - 0.5) * baseSpeed;
-                        velY = -baseSpeed;
-                        break;
-                    default: // Izquierda
-                        x = -50;
-                        y = random.nextDouble() * 1800;
-                        velX = baseSpeed;
-                        velY = (random.nextDouble() - 0.5) * baseSpeed;
-                        break;
-                }
-            } else {
-                // Entre planetas - crear trayectoria que cruce entre dos planetas aleatorios
-                Planet planet1 = planets.get(random.nextInt(planets.size()));
-                Planet planet2 = planets.get(random.nextInt(planets.size()));
-                
-                // Posición inicial cerca de un planeta
-                double angleOffset = random.nextDouble() * 2 * Math.PI;
-                double distance = planet1.getRadius() + 100 + random.nextDouble() * 100;
-                x = planet1.getX() + Math.cos(angleOffset) * distance;
-                y = planet1.getY() + Math.sin(angleOffset) * distance;
-                
-                // Velocidad apuntando hacia el otro planeta
-                double dx = planet2.getX() - x;
-                double dy = planet2.getY() - y;
-                double dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist > 0) {
-                    velX = (dx / dist) * baseSpeed;
-                    velY = (dy / dist) * baseSpeed;
-                } else {
-                    velX = (random.nextDouble() - 0.5) * baseSpeed * 2;
-                    velY = (random.nextDouble() - 0.5) * baseSpeed * 2;
-                }
-            }
-            
-            // Tipo según nivel
-            Asteroid.AsteroidType type = determineAsteroidType(currentLevel);
-            
-            // Verificar que no aparezca muy cerca de la nave
-            double distanceToShip = Math.sqrt(
-                Math.pow(x - playerShip.getX(), 2) +
-                Math.pow(y - playerShip.getY(), 2)
-            );
-            
-            // Solo añadir si está lo suficientemente lejos de la nave (mínimo 200px)
-            if (distanceToShip > 200) {
-                asteroids.add(new Asteroid(x, y, velX, velY, type));
-            }
-        }
-    }
-    
-    /**
-     * Determina el tipo de asteroide según el nivel.
-     * Nivel 1-2: Solo pequeños y medianos
-     * Nivel 3+: Todos los tipos incluyendo grandes
-     */
-    private Asteroid.AsteroidType determineAsteroidType(int level) {
-        double rand = random.nextDouble();
-        
-        // Nivel 1-2: Solo SMALL y MEDIUM
-        if (level <= 2) {
-            if (rand < 0.6) {
-                return Asteroid.AsteroidType.SMALL;
-            } else {
-                return Asteroid.AsteroidType.MEDIUM;
-            }
-        }
-        
-        // Nivel 3+: Todos los tipos
-        // Nivel 7+: puede aparecer Chaser (10%)
-        if (level >= 7 && rand < 0.1) {
-            return Asteroid.AsteroidType.CHASER;
-        }
-        
-        // Distribución normal con más grandes en niveles altos
-        if (rand < 0.4) {
-            return Asteroid.AsteroidType.SMALL;
-        } else if (rand < 0.6) {
-            return Asteroid.AsteroidType.MEDIUM;
-        } else {
-            return Asteroid.AsteroidType.LARGE;
-        }
-    }
-    
-    /**
-     * Calcula el score del nivel completado.
-     */
-    private int calculateLevelScore() {
-        int score = 0;
-        
-        // Base: 100 * nivel
-        score += 100 * currentLevel;
-        
-        // Bonus por tiempo restante
-        int timeRemaining = getRemainingTime();
-        if (timeRemaining > 0) {
-            score += timeRemaining * 10; // +10 por segundo
-        }
-        
-        // Bonus por fuel (si la nave tiene fuel system)
-        // score += (int)playerShip.getFuel(); // +1 por unidad
-        
-        // Penalización por daño recibido
-        score -= damageReceivedThisLevel * 5; // -5 por punto de daño
-        
-        return Math.max(0, score);
-    }
-    
-    /**
-     * Actualiza todas las entidades del juego.
-     */
-    // [MVC] ELIMINADO: public void update()
-    // La lógica de actualización ahora está orquestada por GameController.gameLoop()
-    // Esto corrige las violaciones MVC #1, #4, #9:
-    // - El modelo NO se auto-actualiza
-    // - El controlador orquesta toda la lógica
-    // - El modelo es un holder de estado, no ejecutor de lógica
-    
-    /**
-     * Activa el estado de Game Over.
-     * Hecho público para que GameController lo pueda llamar.
-     */
-    public void triggerGameOver(long currentTime) {
-        gameOver = true;
-        addFloatingText("GAME OVER", playerShip.getX(), playerShip.getY(), Color.RED, currentTime);
-    }
-    
-    
-    // [MVC] ELIMINADO: public void updateGameLogic()
-    // Método temporal que fue reemplazado por orquestación directa en GameController
-    // Los métodos individuales (checkPackagePickup, checkPackageDelivery, etc.)
-    // ahora son llamados directamente por el controlador
-    
-    /**
-     * Reinicia el juego desde el principio.
-     */
-    public void restartGame() {
-        // Desactivar Game Over
-        gameOver = false;
-        gameWon = false;
-        
-        // Reiniciar nivel y tiempo
-        currentLevel = 1;
-        levelTime = 240;
-        startTime = System.currentTimeMillis();
-        pausedTime = 0;
-        paused = false;
-        damageReceivedThisLevel = 0;
-        
-        // Reiniciar score
-        scoreManager = new ScoreManager();
-        
-        // Reiniciar score
-        scoreManager = new ScoreManager();
-        
-        // Limpiar todas las entidades
-        floatingTexts.clear();
-        projectiles.clear();
-        
-        // Crear nueva nave en posición inicial
-        playerShip = null; // Forzar creación de nueva nave
-        
-        // Cargar nivel 1
-        loadLevel(1);
-    }
-    
-    /**
-     * Verifica si la nave puede recoger un paquete.
-     */
-    // [MVC] Método público para orquestación desde GameController
-    public void checkPackagePickup(long currentTime) {
-        for (Package pkg : packages) {
-            if (!pkg.isCollected() && !pkg.isPickedUp() && !pkg.isExpired(currentTime)) {
-                double distance = Math.sqrt(
-                    Math.pow(playerShip.getX() - pkg.getX(), 2) +
-                    Math.pow(playerShip.getY() - pkg.getY(), 2)
-                );
-                
-                if (distance < PICKUP_RADIUS) {
-                    playerShip.pickupPackage(pkg);
-                    // Mostrar feedback visual
-                    String message = pkg.getType() == Package.PackageType.HEAVY ? "¡PESADO!" : "¡Recogido!";
-                    addFloatingText(message, pkg.getX(), pkg.getY(), Color.CYAN, currentTime);
-                    break;
-                }
-            }
-        }
-    }
-    
-    /**
-     * Verifica si la nave puede entregar un paquete.
-     */
-    // [MVC] Método público para orquestación desde GameController
-    public void checkPackageDelivery(long currentTime) {
-        Package carried = playerShip.getCarriedPackage();
-        if (carried == null) return;
-        
-        Planet target = carried.getTargetPlanet();
-        
-        // Verificar distancia a TODOS los planetas
-        for (Planet planet : planets) {
-            double distance = Math.sqrt(
-                Math.pow(playerShip.getX() - planet.getX(), 2) +
-                Math.pow(playerShip.getY() - planet.getY(), 2)
-            );
-            
-            if (distance < planet.getRadius() + 20) {
-                // Está cerca de un planeta
-                if (planet != target) {
-                    // Planeta incorrecto - mostrar feedback solo una vez cada 2 segundos
-                    if (currentTime - lastIncorrectPlanetMessageTime >= 2000) {
-                        addFloatingText("¡Planeta incorrecto!", planet.getX(), planet.getY() - 40, Color.RED, currentTime);
-                        addFloatingText("Destino: " + target.getName(), planet.getX(), planet.getY() - 20, Color.YELLOW, currentTime);
-                        lastIncorrectPlanetMessageTime = currentTime;
-                    }
-                    return; // NO entregar
-                }
-                
-                // Planeta correcto - proceder con entrega
-                carried.setCollected(true);
-                playerShip.deliverPackage();
-                
-                // Calcular puntos según tipo
-                int points = 10;
-                switch (carried.getType()) {
-                    case NORMAL: points = 10; break;
-                    case URGENT: points = 30; break; // Bonus extra
-                    case SPECIAL: points = 50; break;
-                    case HEAVY: points = 20; break; // Bonus extra
-                }
-                scoreManager.addScore(points);
-                addFloatingText("+" + points, target.getX(), target.getY(), Color.GREEN, currentTime);
-                
-                // Añadir vida si es especial
-                if (carried.grantsExtraLife()) {
-                    playerShip.addLife();
-                    addFloatingText("+1 VIDA!", target.getX(), target.getY() + 20, new Color(255, 215, 0), currentTime);
-                }
-                
-                // Actualizar combo con tiempo inyectado
-                scoreManager.addDelivery(currentTime);
-                
-                // Solo paquetes NORMAL cuentan para objetivos
-                if (carried.getType() == Package.PackageType.NORMAL) {
-                    for (LevelObjective objective : levelObjectives) {
-                        if (objective.getTargetPlanet() == target && !objective.isCompleted()) {
-                            objective.incrementDelivered();
-                            
-                            // Verificar si completó el objetivo
-                            if (objective.isCompleted()) {
-                                addFloatingText("¡Objetivo " + target.getName() + " completado!", 
-                                              target.getX(), target.getY() - 40, Color.CYAN, currentTime);
-                            }
-                            
-                            break;
-                        }
-                    }
-                } else {
-                    // Paquetes bonus (URGENTE, PESADO) dan mensaje especial
-                    addFloatingText("¡BONUS!", target.getX(), target.getY() - 40, Color.YELLOW, currentTime);
-                }
-                
-                // Verificar si completó todos los objetivos (SIEMPRE después de cada entrega)
-                boolean allCompleted = true;
-                for (LevelObjective objective : levelObjectives) {
-                    if (!objective.isCompleted()) {
-                        allCompleted = false;
-                        break;
-                    }
-                }
-                
-                if (allCompleted) {
-                    addFloatingText("¡NIVEL COMPLETADO!", playerShip.getX(), playerShip.getY() - 30, Color.YELLOW, currentTime);
-                    // Dar 2 segundos antes de pasar al siguiente nivel
-                    new java.util.Timer().schedule(new java.util.TimerTask() {
-                        @Override
-                        public void run() {
-                            nextLevel();
-                        }
-                    }, 2000);
-                }
-                
-                return; // Salir después de intentar entrega
-            }
-        }
-    }
-    
+    // ========== Métodos de estado puro (setters para GameLogic) ==========
+
     /**
      * Añade un texto flotante al mundo.
-     * [MVC] Tiempo inyectado para evitar dependencia directa en el modelo.
+     * Público para ser invocado desde GameLogic.
      */
-    private void addFloatingText(String text, double x, double y, Color color, long currentTime) {
+    public void addFloatingText(String text, double x, double y, Color color, long currentTime) {
         floatingTexts.add(new FloatingText(text, x, y, 2000, color, currentTime));
     }
-    
+
     /**
-     * Rompe el combo actual (llamar al chocar con asteroide).
+     * Añade una explosión visual (posición + radio).
+     */
+    public void addExplosion(Point position, int radius) {
+        explosionPositions.add(position);
+        explosionSizes.add(radius);
+    }
+
+    /**
+     * Rompe el combo actual.
      */
     public void breakCombo() {
         scoreManager.breakCombo();
     }
-    
-    /**
-     * Dispara un proyectil desde la nave.
-     * [MVC] Tiempo inyectado como parámetro.
-     */
-    public void shootProjectile(long currentTime) {
-        if (playerShip != null && playerShip.canShoot(currentTime)) {
-            Projectile projectile = playerShip.shoot(currentTime);
-            if (projectile != null) {
-                projectiles.add(projectile);
-            }
-        }
-    }
-    
-    /**
-     * Verifica colisiones solo entre proyectiles y asteroides.
-     * Este método es TEMPORAL - debería moverse a CollisionService.
-     */
-    // [MVC] Método público para orquestación desde GameController
-    // TODO: Migrar a CollisionService
-    public void checkProjectileCollision(long currentTime) {
-        // Colisión proyectiles-asteroides
-        for (Projectile projectile : new ArrayList<>(projectiles)) {
-            if (!projectile.isActive()) continue;
-            
-            for (Asteroid asteroid : new ArrayList<>(asteroids)) {
-                if (asteroid.isDestroyed()) continue;
-                
-                double distance = Math.hypot(
-                    projectile.getX() - asteroid.getX(),
-                    projectile.getY() - asteroid.getY()
-                );
-                
-                if (distance < projectile.getRadius() + asteroid.getRadius()) {
-                    // [MVC] Usar setters en lugar de métodos de comportamiento
-                    projectile.setActive(false);  // Antes: projectile.deactivate()
-                    
-                    // Dañar asteroide (antes: asteroid.takeDamage(1))
-                    double currentHealth = asteroid.getHealth();
-                    asteroid.setHealth(currentHealth - 1);
-                    asteroid.setLastHitTime(currentTime); // [BUG FIX] Registrar golpe para barra vida
-                    boolean destroyed = (asteroid.getHealth() <= 0);
-                    
-                    if (destroyed) {
-                        asteroid.setDestroyed(true);
-                        // Agregar explosión con tamaño del asteroide
-                        explosionPositions.add(new Point((int)asteroid.getX(), (int)asteroid.getY()));
-                        explosionSizes.add(asteroid.getRadius());
-                        
-                        // Calcular puntos según tipo de asteroide
-                        int points = 0;
-                        switch (asteroid.getType()) {
-                            case SMALL:
-                                points = 10;
-                                break;
-                            case MEDIUM:
-                                points = 25;
-                                break;
-                            case LARGE:
-                                points = 50;
-                                break;
-                            case CHASER:
-                                points = 30;
-                                break;
-                        }
-                        
-                        // Añadir puntos al marcador
-                        scoreManager.addScore(points);
-                        addFloatingText("+" + points, asteroid.getX(), asteroid.getY(), Color.YELLOW, currentTime);
-                        
-                        // Dividir mediano en dos pequeños
-                        if (asteroid.canSplit()) {
-                            splitAsteroid(asteroid);
-                        }
-                    }
-                    
-                    break;
-                }
-            }
-        }
-        
-        // Eliminar asteroides destruidos
-        asteroids.removeIf(Asteroid::isDestroyed);
-    }
-    
 
-    
-    /**
-     * Divide un asteroide mediano en dos pequeños.
-     */
-    private void splitAsteroid(Asteroid parent) {
-        double x = parent.getX();
-        double y = parent.getY();
-        
-        // Crear dos asteroides pequeños con velocidades opuestas
-        asteroids.add(new Asteroid(x, y, 2, 1, Asteroid.AsteroidType.SMALL));
-        asteroids.add(new Asteroid(x, y, -2, -1, Asteroid.AsteroidType.SMALL));
-    }
+    // --- Setters necesarios para GameLogic ---
+    public void setGameOver(boolean gameOver) { this.gameOver = gameOver; }
+    public void setGameWon(boolean gameWon) { this.gameWon = gameWon; }
+    public void setCurrentLevel(int level) { this.currentLevel = level; }
+    public void setLevelTime(int seconds) { this.levelTime = seconds; }
+    public void setStartTime(long t) { this.startTime = t; }
+    public void setPausedTime(long t) { this.pausedTime = t; }
+    public void setPausedFlag(boolean p) { this.paused = p; }
+    public void setDamageReceivedThisLevel(int d) { this.damageReceivedThisLevel = d; }
+    public void setPlayerShip(Ship ship) { this.playerShip = ship; }
+    public void setLastAsteroidSpawn(long t) { this.lastAsteroidSpawn = t; }
+    public void setLastIncorrectPlanetMessageTime(long t) { this.lastIncorrectPlanetMessageTime = t; }
+
+    public long getLastAsteroidSpawn() { return lastAsteroidSpawn; }
+    public long getLastIncorrectPlanetMessageTime() { return lastIncorrectPlanetMessageTime; }
+    public int getDamageReceivedThisLevel() { return damageReceivedThisLevel; }
+
+    public void resetScoreManager() { this.scoreManager = new ScoreManager(); }
     
 
     
 
     
+    // ========== Getters / Setters de estado ==========
+
+    @Override
     public Point getCameraOffset() {
         return cameraOffset;
     }
@@ -699,66 +252,52 @@ public class GameModel {
     
     /**
      * Obtiene el tiempo restante en segundos.
+     * Tiempo inyectado desde el controlador (sin System.currentTimeMillis).
      */
-    public int getRemainingTime() {
+    @Override
+    public int getRemainingTime(long currentTime) {
         if (paused) {
             return (int)((levelTime * 1000 - pausedTime) / 1000);
         }
-        long elapsed = System.currentTimeMillis() - startTime;
+        long elapsed = currentTime - startTime;
         long remaining = levelTime * 1000 - elapsed;
         return Math.max(0, (int)(remaining / 1000));
     }
     
     /**
-     * Verifica si se acabó el tiempo.
+     * Pausa/reanuda el tiempo (con tiempo inyectado).
      */
-    public boolean isTimeUp() {
-        return getRemainingTime() <= 0;
-    }
-    
-    /**
-     * Verifica si el tiempo es crítico (<30 segundos).
-     */
-    public boolean isCriticalTime() {
-        return getRemainingTime() < 30 && getRemainingTime() > 0;
-    }
-    
-    /**
-     * Añade tiempo bonus (ya no se usa - tiempo solo al completar nivel).
-     */
-    public void addTimeBonus() {
-        // Método obsoleto - tiempo solo se añade al completar nivel
-    }
-    
-    /**
-     * Pausa/reanuda el tiempo.
-     */
-    public void setPaused(boolean pause) {
+    public void setPaused(boolean pause, long currentTime) {
         if (pause && !paused) {
-            pausedTime = System.currentTimeMillis() - startTime;
+            pausedTime = currentTime - startTime;
             paused = true;
         } else if (!pause && paused) {
-            startTime = System.currentTimeMillis() - pausedTime;
+            startTime = currentTime - pausedTime;
             paused = false;
         }
     }
     
+    @Override
     public Ship getPlayerShip() {
         return playerShip;
     }
     
+    @Override
     public List<Planet> getPlanets() {
         return planets;
     }
     
+    @Override
     public List<Asteroid> getAsteroids() {
         return asteroids;
     }
     
+    @Override
     public List<Package> getPackages() {
         return packages;
     }
     
+    @Override
     public List<FloatingText> getFloatingTexts() {
         return floatingTexts;
     }
@@ -767,63 +306,53 @@ public class GameModel {
         return scoreManager;
     }
     
-    /**
-     * Obtiene el paquete más cercano no recogido.
-     */
-    public Package getClosestPackage() {
-        Package closest = null;
-        double minDistance = Double.MAX_VALUE;
-        long currentTime = System.currentTimeMillis();
-        
-        for (Package pkg : packages) {
-            if (!pkg.isCollected() && !pkg.isPickedUp() && !pkg.isExpired(currentTime)) {
-                double distance = Math.sqrt(
-                    Math.pow(playerShip.getX() - pkg.getX(), 2) +
-                    Math.pow(playerShip.getY() - pkg.getY(), 2)
-                );
-                
-                if (distance < minDistance) {
-                    minDistance = distance;
-                    closest = pkg;
-                }
-            }
-        }
-        
-        return closest;
-    }
-    
+    @Override
     public List<Projectile> getProjectiles() {
         return projectiles;
     }
     
-    public List<Point> getAndClearExplosions() {
-        List<Point> result = new ArrayList<>(explosionPositions);
+    /**
+     * Explosiones como snapshot de solo lectura (IGameModel).
+     */
+    @Override
+    public List<Point> getExplosionPositions() {
+        return new ArrayList<>(explosionPositions);
+    }
+
+    @Override
+    public List<Integer> getExplosionSizes() {
+        return new ArrayList<>(explosionSizes);
+    }
+
+    /**
+     * Consume las explosiones pendientes (solo llamado desde el controlador).
+     */
+    public void clearExplosions() {
         explosionPositions.clear();
-        return result;
-    }
-    
-    public List<Integer> getAndClearExplosionSizes() {
-        List<Integer> result = new ArrayList<>(explosionSizes);
         explosionSizes.clear();
-        return result;
     }
     
+    @Override
     public int getCurrentLevel() {
         return currentLevel;
     }
     
+    @Override
     public List<LevelObjective> getLevelObjectives() {
         return levelObjectives;
     }
     
+    @Override
     public boolean isGameOver() {
         return gameOver;
     }
     
+    @Override
     public boolean isGameWon() {
         return gameWon;
     }
     
+    @Override
     public int getTotalScore() {
         return scoreManager != null ? scoreManager.getScore() : 0;
     }
@@ -881,6 +410,7 @@ public class GameModel {
     /**
      * Obtiene todas las naves remotas.
      */
+    @Override
     public List<Ship> getRemoteShips() {
         return new ArrayList<>(remoteShips.values());
     }

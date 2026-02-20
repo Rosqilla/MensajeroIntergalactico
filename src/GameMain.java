@@ -26,8 +26,9 @@ public class GameMain {
         final int port = networkPort;
         
         SwingUtilities.invokeLater(() -> {
-            // 1. Instanciar el modelo del juego (800x600 para coincidir con la ventana)
-            GameModel model = new GameModel(800, 600);
+            // 1. Instanciar el modelo del juego (tiempo inyectado — MVC)
+            long initTime = System.currentTimeMillis();
+            GameModel model = new GameModel(800, 600, initTime);
             
             // 2. Instanciar la vista con el modelo
             GameView view = new GameView(model);
