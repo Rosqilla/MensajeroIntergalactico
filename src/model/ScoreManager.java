@@ -25,16 +25,17 @@ public class ScoreManager {
         this.currentCombo = 0;
         this.maxCombo = 0;
         this.score = 0;
-        this.lastDeliveryTime = System.currentTimeMillis();
+        this.lastDeliveryTime = 0;
         this.perfectRun = true;
     }
     
     /**
-     * Actualiza el combo comprobando si ha expirado.
+     * Verifica si el combo ha expirado.
+     * [MVC] Tiempo inyectado como parámetro.
      */
-    public void update() {
-        if (currentCombo > 0) {
-            long timeSinceLastDelivery = System.currentTimeMillis() - lastDeliveryTime;
+    public void updateCombo(long currentTime) {
+        if (currentCombo > 0 && lastDeliveryTime > 0) {
+            long timeSinceLastDelivery = currentTime - lastDeliveryTime;
             if (timeSinceLastDelivery > COMBO_TIMEOUT_MS) {
                 breakCombo();
             }
@@ -43,13 +44,14 @@ public class ScoreManager {
     
     /**
      * Registra una entrega y actualiza el combo.
+     * [MVC] Tiempo inyectado como parámetro.
      */
-    public void addDelivery() {
+    public void addDelivery(long currentTime) {
         currentCombo++;
         if (currentCombo > maxCombo) {
             maxCombo = currentCombo;
         }
-        lastDeliveryTime = System.currentTimeMillis();
+        lastDeliveryTime = currentTime;
     }
     
     /**

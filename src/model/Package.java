@@ -22,13 +22,13 @@ public class Package {
     private long creationTime;
     private static final long URGENT_LIFETIME_MS = 30000; // 30 segundos
     
-    public Package(double x, double y, Planet targetPlanet, PackageType type) {
+    public Package(double x, double y, Planet targetPlanet, PackageType type, long currentTime) {
         this.position = new Point2D.Double(x, y);
         this.targetPlanet = targetPlanet;
         this.collected = false;
         this.pickedUp = false;
         this.type = type;
-        this.creationTime = System.currentTimeMillis();
+        this.creationTime = currentTime;
     }
     
     public Point2D.Double getPosition() {
@@ -76,20 +76,22 @@ public class Package {
     
     /**
      * Verifica si un paquete urgente ha expirado.
+     * [MVC] Tiempo inyectado como parámetro para evitar dependencia directa.
      */
-    public boolean isExpired() {
+    public boolean isExpired(long currentTime) {
         if (type == PackageType.URGENT) {
-            return System.currentTimeMillis() - creationTime > URGENT_LIFETIME_MS;
+            return currentTime - creationTime > URGENT_LIFETIME_MS;
         }
         return false;
     }
     
     /**
      * Obtiene el tiempo restante para paquetes urgentes (en segundos).
+     * [MVC] Tiempo inyectado como parámetro para evitar dependencia directa.
      */
-    public int getRemainingTime() {
+    public int getRemainingTime(long currentTime) {
         if (type == PackageType.URGENT) {
-            long elapsed = System.currentTimeMillis() - creationTime;
+            long elapsed = currentTime - creationTime;
             long remaining = URGENT_LIFETIME_MS - elapsed;
             return Math.max(0, (int)(remaining / 1000));
         }
@@ -127,5 +129,25 @@ public class Package {
      */
     public boolean grantsExtraLife() {
         return type == PackageType.SPECIAL;
+    }
+    
+    /**
+     * Obtiene el color de destino (del planeta objetivo).
+     */
+    public java.awt.Color getDestinationColor() {
+        return targetPlanet != null ? targetPlanet.getColor() : java.awt.Color.WHITE;
+    }
+    
+    /**
+     * Obtiene los puntos base por entregar este paquete.
+     */
+    public int getDeliveryPoints() {
+        switch (type) {
+            case SPECIAL: return 2000;
+            case HEAVY: return 750;
+            case URGENT: return 500;
+            case NORMAL:
+            default: return 300;
+        }
     }
 }

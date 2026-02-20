@@ -2,11 +2,14 @@ package controller;
 
 import model.GameModel;
 import model.Ship;
+import model.FloatingText;
 import model.network.NetworkMessage;
 import model.network.PeerInfo;
 import view.GameView;
+import services.*;
 
 import javax.swing.*;
+import java.awt.Point;
 import java.awt.event.KeyEvent;
 import java.awt.event.KeyListener;
 import java.awt.event.MouseEvent;
@@ -16,12 +19,20 @@ import java.awt.event.MouseListener;
  * Controlador del juego que gestiona la entrada de teclado y el ciclo de actualización.
  * Controles arcade: WASD/Flechas para 8 direcciones, SHIFT/SPACE para boost.
  * Incluye sincronización P2P con NetworkController.
+ * REFACTORIZADO: Usa capa de servicios para separar lógica de negocio.
  */
 public class GameController implements KeyListener, MouseListener, NetworkController.NetworkListener {
     private final GameModel model;
     private final GameView view;
     private final Timer gameTimer;
     private NetworkController networkController; // Sistema P2P
+    
+    // === CAPA DE SERVICIOS (MVC) ===
+    private final PhysicsService physics;
+    private final CollisionService collisions;
+    private final SpawnService spawner;
+    private final ScoreService scores;
+    private final CameraService camera;
     
     // Estado de las teclas presionadas
     private boolean upPressed = false;
@@ -47,6 +58,15 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
         this.model = model;
         this.view = view;
         
+        // === INICIALIZAR SERVICIOS (MVC REFACTORIZADO) ===
+        this.physics = new PhysicsService();
+        this.spawner = new SpawnService();
+        this.scores = new ScoreService();
+        this.camera = new CameraService();
+        this.collisions = new CollisionService(physics, scores, spawner);
+        
+        System.out.println("[MVC] Capa de servicios inicializada");
+        
         // Inicializar NetworkController
         try {
             this.networkController = new NetworkController(networkPort);
@@ -71,6 +91,20 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
      * Inicia el ciclo del juego.
      */
     public void start() {
+        // Inicializar cámara centrada en la nave
+        Ship playerShip = model.getPlayerShip();
+        if (playerShip != null) {
+            camera.updateCamera(playerShip, view.getWidth(), view.getHeight());
+            // Forzar posición inicial (sin interpolación) llamando varias veces para converger rápido
+            for (int i = 0; i < 20; i++) {
+                camera.updateCamera(playerShip, view.getWidth(), view.getHeight());
+            }
+            // Sincronizar con GameModel
+            Point offset = model.getCameraOffset();
+            offset.x = -(int)camera.getCameraX();
+            offset.y = -(int)camera.getCameraY();
+        }
+        
         gameTimer.start();
         
         // Iniciar sistema P2P
@@ -99,52 +133,139 @@ public class GameController implements KeyListener, MouseListener, NetworkContro
     
     /**
      * Ciclo principal del juego ejecutado cada frame.
+     * REFACTORIZADO: Orquesta servicios en lugar de llamar model.update()
      */
     private void gameLoop() {
-        // Procesar entrada y controlar la nave
-        processInput();
+        // Tiempo único para todo el frame (inyectado a todos los servicios y modelos)
+        long currentTime = System.currentTimeMillis();
         
-        // Actualizar el modelo (posiciones, física, cámara)
-        model.update();
+        // Procesar entrada del jugador
+        processInput(currentTime);
         
-        // Enviar actualización de red (throttled)
+        // === ORQUESTACIÓN DE SERVICIOS (MVC) ===
+        Ship playerShip = model.getPlayerShip();
+        
+        // 1. Actualizar física de la nave
+        if (playerShip != null && playerShip.isAlive()) {
+            physics.updateShipPhysics(playerShip);
+            physics.updateBoost(playerShip); // [BUG FIX] Actualizar boost (consumo/recarga)
+            
+            // 2. Actualizar cámara (smooth scrolling)
+            camera.updateCamera(playerShip, view.getWidth(), view.getHeight());
+            
+            // Sincronizar cámara con GameModel (para GameView)
+            // CameraService devuelve posición del viewport en el mundo (top-left)
+            // GameView usa offset negativo para dibujar
+            Point offset = model.getCameraOffset();
+            offset.x = -(int)camera.getCameraX();
+            offset.y = -(int)camera.getCameraY();
+        }
+        
+        // 3. Actualizar física de asteroides
+        for (model.Asteroid asteroid : model.getAsteroids()) {
+            physics.updateAsteroidPhysics(asteroid);
+        }
+        
+        // 4. Actualizar física de proyectiles
+        for (model.Projectile projectile : model.getProjectiles()) {
+            physics.updateProjectilePhysics(projectile);
+        }
+        
+        // 5. Detectar colisiones (nave-asteroides)
+        if (playerShip != null && playerShip.isAlive()) {
+            CollisionService.ShipAsteroidResult shipCollision = 
+                collisions.checkShipAsteroidCollisions(playerShip, model.getAsteroids(), currentTime);
+            
+            if (shipCollision.collision) {
+                scores.resetCombo();
+                if (shipCollision.shipDestroyed) {
+                    model.triggerGameOver(currentTime);
+                }
+            }
+        }
+        
+        // 6. Actualizar combos e inmunidad con tiempo inyectado
+        scores.update(currentTime);
+        
+        // Actualizar estado de inmunidad del jugador
+        if (playerShip != null) {
+            playerShip.isImmune(currentTime); // expira si ya pasaron 2 segundos
+        }
+        
+        // 7. Orquestar lógica de juego (MVC - Controller orquesta, modelo NO se auto-actualiza)
+        if (!model.isGameOver()) {
+            // Verificar condiciones de Game Over
+            if (playerShip != null && (playerShip.getLives() <= 0 || model.getRemainingTime() <= 0)) {
+                model.triggerGameOver(currentTime);
+            } else {
+                // Limpiar proyectiles inactivos
+                model.getProjectiles().removeIf(p -> !p.isActive());
+                
+                // Actualizar textos flotantes (limpiar expirados)
+                model.getFloatingTexts().removeIf(text -> text.isExpired(currentTime));
+                
+                // Verificar recogida y entrega de paquetes
+                if (playerShip != null) {
+                    if (!playerShip.hasPackage()) {
+                        model.checkPackagePickup(currentTime);
+                    } else {
+                        model.checkPackageDelivery(currentTime);
+                    }
+                }
+                
+                // Eliminar paquetes urgentes expirados
+                model.getPackages().removeIf(pkg -> !pkg.isCollected() && pkg.isExpired(currentTime));
+                
+                // Regenerar paquetes faltantes
+                model.checkAndRegeneratePackages(currentTime);
+                
+                // Generar asteroides periódicamente
+                model.spawnAsteroidsOverTime(currentTime);
+                
+                // Verificar colisiones (proyectiles-asteroides)
+                // TODO: Migrar a CollisionService
+                model.checkProjectileCollision(currentTime);
+            }
+        }
+        
+        // 8. Enviar actualización de red (throttled)
         sendNetworkUpdate();
         
-        // Redibujar la vista
+        // 9. Redibujar la vista
         view.repaint();
     }
     
     /**
      * Procesa la entrada del teclado y controla la nave.
-     * Movimiento espacial completo: rotación + thrust + strafe + freno.
+     * REFACTORIZADO: Usa PhysicsService en lugar de métodos de Ship.
      */
-    private void processInput() {
+    private void processInput(long currentTime) {
         Ship ship = model.getPlayerShip();
         if (ship == null || !ship.isAlive()) {
             return;
         }
         
-        // Rotación (A/D)
+        // Rotación (A/D) - USA PHYSICSSERVICE
         if (leftPressed) {
-            ship.rotate(-1);
+            physics.applyRotation(ship, -1);
         }
         if (rightPressed) {
-            ship.rotate(1);
+            physics.applyRotation(ship, 1);
         }
         
-        // Empuje solo hacia adelante (W)
+        // Empuje solo hacia adelante (W) - USA PHYSICSSERVICE
         if (upPressed) {
-            ship.thrust(1);
+            physics.applyThrust(ship, 1.0, boostPressed);
         }
         
-        // Freno de emergencia (S)
+        // Freno de emergencia (S) - USA PHYSICSSERVICE
         if (emergencyBrakePressed) {
-            ship.emergencyBrake();
+            physics.applyBrake(ship);
         }
         
         // Disparo (SPACE) - permite disparo continuo con cooldown
         if (shootPressed) {
-            model.shootProjectile();
+            model.shootProjectile(currentTime);
         }
         
         // Activar/desactivar boost

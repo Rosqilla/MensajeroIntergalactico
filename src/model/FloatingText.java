@@ -7,44 +7,32 @@ import java.awt.Color;
  */
 public class FloatingText {
     private String text;
-    private double x, y;
+    private double startX, startY;
     private long creationTime;
     private long duration; // en milisegundos
     private Color color;
-    private double velocityY; // Velocidad de ascenso
+    private static final double VELOCITY_Y = -0.06; // px/ms ≈ 1px por frame a 60fps
     
-    public FloatingText(String text, double x, double y, long duration, Color color) {
+    /**
+     * Constructor con tiempo inyectado.
+     * [MVC] Tiempo inyectado como parámetro para evitar dependencia directa.
+     */
+    public FloatingText(String text, double x, double y, long duration, Color color, long currentTime) {
         this.text = text;
-        this.x = x;
-        this.y = y;
-        this.creationTime = System.currentTimeMillis();
+        this.startX = x;
+        this.startY = y;
+        this.creationTime = currentTime;
         this.duration = duration;
         this.color = color;
-        this.velocityY = -1.0; // Asciende lentamente
     }
     
     /**
-     * Actualiza la posición del texto.
+     * Obtiene la posición Y actual calculada dinámicamente.
+     * [MVC] Cálculo sin estado mutable.
      */
-    public void update() {
-        y += velocityY;
-    }
-    
-    /**
-     * Verifica si el texto ha expirado.
-     */
-    public boolean isExpired() {
-        return System.currentTimeMillis() - creationTime > duration;
-    }
-    
-    /**
-     * Obtiene la opacidad actual del texto (0-255).
-     */
-    public int getAlpha() {
-        long elapsed = System.currentTimeMillis() - creationTime;
-        double progress = (double) elapsed / duration;
-        // Desvanecimiento lineal
-        return (int) (255 * (1.0 - progress));
+    public double getY(long currentTime) {
+        long elapsed = currentTime - creationTime;
+        return startY + (VELOCITY_Y * elapsed);
     }
     
     public String getText() {
@@ -52,14 +40,29 @@ public class FloatingText {
     }
     
     public double getX() {
-        return x;
-    }
-    
-    public double getY() {
-        return y;
+        return startX;
     }
     
     public Color getColor() {
         return color;
+    }
+    
+    /**
+     * Verifica si el texto ha expirado.
+     * [MVC] Tiempo inyectado como parámetro para evitar dependencia directa.
+     */
+    public boolean isExpired(long currentTime) {
+        return currentTime - creationTime > duration;
+    }
+    
+    /**
+     * Obtiene la opacidad actual del texto (0-255).
+     * [MVC] Tiempo inyectado como parámetro para evitar dependencia directa.
+     */
+    public int getAlpha(long currentTime) {
+        long elapsed = currentTime - creationTime;
+        double progress = (double) elapsed / duration;
+        // Desvanecimiento lineal
+        return (int) (255 * (1.0 - progress));
     }
 }

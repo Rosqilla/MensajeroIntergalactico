@@ -2,7 +2,6 @@ package view;
 
 import model.*;
 import model.Package.PackageType;
-import model.generators.GameData;
 
 import javax.swing.*;
 import javax.imageio.ImageIO;
@@ -42,7 +41,6 @@ public class GameView extends JPanel {
     private BufferedImage[] fireTrailFrames;
     
     // Animación
-    private int projectileFrame = 0;
     private int trailFrame = 0;
     private long lastFrameTime = 0;
     private static final long FRAME_DELAY = 50;
@@ -73,7 +71,6 @@ public class GameView extends JPanel {
      */
     private static class ExplosionAnimation {
         double x, y;
-        int frame;
         long startTime;
         double scale; // Escala según tamaño del asteroide
         static final int TOTAL_FRAMES = 11; // 11 frames en tira horizontal
@@ -82,30 +79,26 @@ public class GameView extends JPanel {
         ExplosionAnimation(double x, double y, double scale) {
             this.x = x;
             this.y = y;
-            this.frame = 0;
             this.startTime = System.currentTimeMillis();
             this.scale = scale;
         }
         
         boolean isFinished() {
-            return frame >= TOTAL_FRAMES;
+            return getCurrentFrame() >= TOTAL_FRAMES;
         }
         
-        void update() {
+        // [MVC] Método pasivo - calcula sin cambiar estado
+        int getCurrentFrame() {
             long elapsed = System.currentTimeMillis() - startTime;
+            return (int)(elapsed / FRAME_DURATION);
+        }
+    }
+    
     /**
      * Constructor de la vista.
      * Inicializa los sprites, el fondo estrellado y configura el panel.
      * 
      * @param model El modelo del juego a visualizar
-     */
-            frame = (int)(elapsed / FRAME_DURATION);
-        }
-    }
-    
-    /**
-     * Carga todos los sprites desde el sistema de archivos.
-     * Si algún sprite falla al cargar, imprime un mensaje de error.
      */
     public GameView(GameModel model) {
         this.model = model;
@@ -302,6 +295,7 @@ public class GameView extends JPanel {
     }
     
     private void drawAsteroids(Graphics2D g2d, int camX, int camY) {
+        long currentTime = System.currentTimeMillis();
         for (Asteroid asteroid : model.getAsteroids()) {
             if (asteroid.isDestroyed()) continue;
             
@@ -367,7 +361,7 @@ public class GameView extends JPanel {
             }
             
             // Health indicator for damaged asteroids (solo si fue golpeado recientemente)
-            if (asteroid.getHealth() < 100 && asteroid.wasRecentlyHit()) {
+            if (asteroid.getHealth() < 100 && asteroid.wasRecentlyHit(currentTime)) {
                 int radius = asteroid.getRadius();
                 int healthBarWidth = radius * 2;
                 int healthBarHeight = 8;
@@ -448,10 +442,11 @@ public class GameView extends JPanel {
             g2d.drawRect(x - size / 2, y - size / 2, size, size);
             
             // Timer indicator for urgent packages
-            if (pkg.getType() == PackageType.URGENT && pkg.getRemainingTime() < 10) {
+            long currentTime = System.currentTimeMillis();
+            if (pkg.getType() == PackageType.URGENT && pkg.getRemainingTime(currentTime) < 10) {
                 g2d.setColor(Color.WHITE);
                 g2d.setFont(new Font("Arial", Font.BOLD, 10));
-                g2d.drawString(String.valueOf((int)pkg.getRemainingTime()), x - 5, y - size / 2 - 5);
+                g2d.drawString(String.valueOf((int)pkg.getRemainingTime(currentTime)), x - 5, y - size / 2 - 5);
             }
         }
     }
@@ -669,27 +664,27 @@ public class GameView extends JPanel {
         if (explosionSheet == null) return;
         
         for (ExplosionAnimation exp : explosions) {
-            exp.update();
             if (exp.isFinished()) continue;
             
+            int frame = exp.getCurrentFrame();
             int x = (int)exp.x + camX;
             int y = (int)exp.y + camY;
             
             // 11 frames, cada uno de 64x64 píxeles en tira horizontal
-            if (exp.frame >= 11) continue;
+            if (frame >= 11) continue;
             
             // Calcular offset en la tira horizontal (704×64px)
             // Frame 0: x=0, Frame 1: x=64, Frame 2: x=128, ... Frame 10: x=640
-            int srcX = exp.frame * 64;  // Offset horizontal (0, 64, 128, 192...)
+            int srcX = frame * 64;  // Offset horizontal (0, 64, 128, 192...)
             int srcY = 0;                // Siempre 0 (una sola fila)
             
             try {
                 // Recortar frame de 64×64 píxeles de la tira horizontal
-                BufferedImage frame = explosionSheet.getSubimage(srcX, srcY, 64, 64);
+                BufferedImage frameImg = explosionSheet.getSubimage(srcX, srcY, 64, 64);
                 
                 // Tamaño adaptado al meteorito
                 int size = (int)(64 * exp.scale);
-                g2d.drawImage(frame, x - size/2, y - size/2, size, size, null);
+                g2d.drawImage(frameImg, x - size/2, y - size/2, size, size, null);
             } catch (Exception e) {
                 // Si hay error leyendo el frame, continuar
             }
@@ -697,12 +692,13 @@ public class GameView extends JPanel {
     }
     
     private void drawFloatingTexts(Graphics2D g2d, int camX, int camY) {
+        long currentTime = System.currentTimeMillis();
         for (FloatingText text : model.getFloatingTexts()) {
             int x = (int)text.getX() + camX;
-            int y = (int)text.getY() + camY;
+            int y = (int)text.getY(currentTime) + camY;
             
             // Asegurar que alpha está en rango 0-255
-            int alpha = Math.max(0, Math.min(255, text.getAlpha()));
+            int alpha = Math.max(0, Math.min(255, text.getAlpha(currentTime)));
             g2d.setColor(new Color(255, 255, 255, alpha));
             g2d.setFont(new Font("Arial", Font.BOLD, 16));
             FontMetrics fm = g2d.getFontMetrics();

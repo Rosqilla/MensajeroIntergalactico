@@ -27,8 +27,7 @@ public class Asteroid {
     private static final int LARGE_RADIUS = 40;
     private static final int CHASER_RADIUS = 20;
     
-    // Velocidad del perseguidor
-    private static final double CHASER_SPEED = 1.0;
+    // [MVC] CHASER_SPEED movida a PhysicsService
     
     public Asteroid(double x, double y, double velX, double velY, int radius) {
         this.position = new Point2D.Double(x, y);
@@ -89,47 +88,10 @@ public class Asteroid {
         }
     }
     
-    public void update() {
-        position.x += velX;
-        position.y += velY;
-    }
-    
-    /**
-     * Actualiza el asteroide perseguidor moviéndose hacia el objetivo.
-     */
-    public void updateChaser(double targetX, double targetY) {
-        if (type != AsteroidType.CHASER) {
-            update();
-            return;
-        }
-        
-        // Calcular dirección hacia el objetivo
-        double dx = targetX - position.x;
-        double dy = targetY - position.y;
-        double distance = Math.sqrt(dx * dx + dy * dy);
-        
-        if (distance > 0) {
-            velX = (dx / distance) * CHASER_SPEED;
-            velY = (dy / distance) * CHASER_SPEED;
-        }
-        
-        update();
-    }
-    
-    /**
-     * Recibe daño y verifica si debe destruirse.
-     */
-    public boolean takeDamage(double damage) {
-        lastHitTime = System.currentTimeMillis();
-        health -= damage;
-        
-        if (health <= 0) {
-            destroyed = true;
-            return true;
-        }
-        
-        return false;
-    }
+    // [MVC] Métodos de comportamiento movidos a servicios:
+    // update() -> PhysicsService.updateAsteroidPhysics()
+    // updateChaser() -> PhysicsService.updateAsteroidPhysics() (detecta CHASER)
+    // takeDamage() -> CollisionService (maneja colisiones y daño)
     
     /**
      * Verifica si puede dividirse (solo medianos).
@@ -187,8 +149,8 @@ public class Asteroid {
         return health;
     }
     
-    public boolean wasRecentlyHit() {
-        return System.currentTimeMillis() - lastHitTime < 2000; // 2 segundos
+    public boolean wasRecentlyHit(long currentTime) {
+        return currentTime - lastHitTime < 2000; // 2 segundos
     }
     
     /**
@@ -197,5 +159,71 @@ public class Asteroid {
     public boolean isOutOfBounds(int width, int height) {
         return position.x + radius < 0 || position.x - radius > width ||
                position.y + radius < 0 || position.y - radius > height;
+    }
+    
+    // ===== SETTERS PARA SERVICES LAYER =====
+    
+    /**
+     * Establece puntos de vida/salud del asteroide.
+     */
+    public void setHealth(double health) {
+        this.health = health;
+    }
+    
+    /**
+     * [BUG FIX] Establece el tiempo del último golpe recibido.
+     */
+    public void setLastHitTime(long time) {
+        this.lastHitTime = time;
+    }
+    
+    /**
+     * Alias para obtener hit points (compatibilidad).
+     */
+    public double getHitPoints() {
+        return health;
+    }
+    
+    /**
+     * Alias para establecer hit points (compatibilidad).
+     */
+    public void setHitPoints(double hp) {
+        this.health = hp;
+    }
+    
+    /**
+     * Obtiene valor de puntos al destruir.
+     */
+    public int getPointValue() {
+        switch (type) {
+            case SMALL: return 100;
+            case MEDIUM: return 200;
+            case CHASER: return 300;
+            case LARGE: return 0; // No se destruyen
+            default: return 50;
+        }
+    }
+    
+    /**
+     * Marca el asteroide como destruido.
+     */
+    public void setDestroyed(boolean destroyed) {
+        this.destroyed = destroyed;
+    }
+    
+    /**
+     * Establece velocidad.
+     */
+    public void setVelocity(double vx, double vy) {
+        this.velX = vx;
+        this.velY = vy;
+    }
+    
+    /**
+     * Establece posición.
+     */
+    public void setPosition(double x, double y) {
+        this.position.x = x;
+        this.position.y = y;
     }
 }

@@ -1,11 +1,10 @@
-package model.generators;
+package services;
 
 import java.awt.Color;
 import java.awt.Point;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Random;
-import services.GameData;
 
 /**
  * Generador procedural de niveles con dificultad progresiva.
@@ -380,10 +379,5 @@ public class LevelGenerator {
         if (level == 2) return 5;
         if (level == 3) return 8;
         return 8 + (level - 3) * 2; // +2 por nivel
-    }
-    
-    private int getFuelStationCount(int level) {
-        if (level == 1) return 0; // Tutorial sin límite de fuel
-        return 1 + (level / 2); // 1 estación cada 2 niveles
     }
 }

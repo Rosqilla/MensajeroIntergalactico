@@ -34,22 +34,10 @@ public class Projectile {
         this(startX, startY, angle);
     }
     
-    public void update(double deltaMs) {
-        if (!active) return;
-        x += velX;
-        y += velY;
-    }
-    
-    public void update() {
-        if (!active) return;
-        x += velX;
-        y += velY;
-    }
-    
-    public void checkBounds(int width, int height) {
-        // Sin límites - los proyectiles pueden ir a cualquier parte del mapa
-        // Solo se desactivan al impactar con asteroides
-    }
+    // [MVC] Métodos de comportamiento movidos a PhysicsService:
+    // update() -> PhysicsService.updateProjectilePhysics()
+    // checkBounds() -> PhysicsService (maneja límites si es necesario)
+    // deactivate() -> Setters públicos permiten desactivación desde servicios
     
     public boolean isActive() {
         return active;
@@ -65,4 +53,43 @@ public class Projectile {
     public int getSize() { return SIZE; }
     public int getRadius() { return SIZE; }
     public Color getColor() { return color; }
+    
+    // ===== SETTERS PARA SERVICES LAYER =====
+    
+    /**
+     * Establece estado activo del proyectil.
+     */
+    public void setActive(boolean active) {
+        this.active = active;
+    }
+    
+    /**
+     * Establece posición del proyectil.
+     */
+    public void setPosition(double x, double y) {
+        this.x = x;
+        this.y = y;
+    }
+    
+    /**
+     * Establece velocidad del proyectil.
+     */
+    public void setVelocity(double vx, double vy) {
+        this.velX = vx;
+        this.velY = vy;
+    }
+    
+    /**
+     * Obtiene velocidad X.
+     */
+    public double getVelX() {
+        return velX;
+    }
+    
+    /**
+     * Obtiene velocidad Y.
+     */
+    public double getVelY() {
+        return velY;
+    }
 }

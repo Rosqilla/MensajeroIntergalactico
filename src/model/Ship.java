@@ -29,21 +29,11 @@ public class Ship {
     // Sistema de boost (no combustible)
     private double boost;
     private static final double MAX_BOOST = 100.0;
-    private static final double BOOST_CONSUMPTION = 10.0; // Por segundo (aprox 0.167 por frame a 60fps)
-    private static final double BOOST_RECHARGE = 20.0; // Por segundo (aprox 0.333 por frame a 60fps)
     private static final double BOOST_ACTIVATION_THRESHOLD = 0.0; // Puede activar hasta llegar a 0%
-    private static final double BOOST_RECHARGE_THRESHOLD = 30.0; // Tarda un poco en recuperar boost
     private boolean boostActive;
     private boolean canBoost;
     
-    // Constantes de física (movimiento espacial con control fino)
-    private static final double THRUST_POWER = 0.35; // Aceleración rápida y satisfactoria
-    private static final double REVERSE_MULTIPLIER = 0.6; // Frenar al 60%
-    private static final double ROTATION_SPEED = 0.08; // Rotación ágil
-    private static final double BOOST_MULTIPLIER = 2.5; // Boost potente
-    private static final double FRICTION = 0.96; // Fricción moderada para control
-    private static final double EMERGENCY_BRAKE = 0.93; // Freno suave y progresivo (reduce 7% por frame)
-    private static final double MAX_SPEED = 8.0; // Velocidad máxima alta
+    // [MVC] Constantes de física movidas a PhysicsService
     
     // Sistema de paquetes
     private Package carriedPackage;
@@ -101,69 +91,11 @@ public class Ship {
         return tints[Math.abs(hash) % tints.length];
     }
     
-    /**
-     * Rota la nave.
-     * @param direction -1 izquierda, 1 derecha
-     */
-    public void rotate(double direction) {
-        if (lives <= 0) return;
-        rotationAngle += direction * ROTATION_SPEED;
-    }
-    
-    /**
-     * Aplica freno de emergencia (reduce velocidad drásticamente).
-     */
-    public void emergencyBrake() {
-        if (lives <= 0) return;
-        velocity.x *= EMERGENCY_BRAKE;
-        velocity.y *= EMERGENCY_BRAKE;
-    }
-    
-    /**
-     * Aplica empuje en la dirección que apunta la nave.
-     * @param thrust 1 adelante, -1 atrás, 0 sin empuje
-     */
-    public void thrust(double thrust) {
-        if (lives <= 0) return;
-        
-        double power = THRUST_POWER * thrust;
-        
-        // Marcha atrás más lenta
-        if (thrust < 0) {
-            power *= REVERSE_MULTIPLIER;
-        }
-        
-        // BOOST: siempre empuja hacia adelante automáticamente
-        if (boostActive) {
-            // Boost fuerza empuje hacia adelante (anula marcha atrás)
-            power = THRUST_POWER * BOOST_MULTIPLIER;
-        }
-        
-        // Aplicar aceleración en la dirección de rotación
-        velocity.x += Math.cos(rotationAngle) * power;
-        velocity.y += Math.sin(rotationAngle) * power;
-        
-        // Limitar velocidad
-        limitSpeed();
-    }
-    
-    /**
-     * Limita la velocidad máxima de la nave.
-     */
-    private void limitSpeed() {
-        double currentSpeed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
-        double maxSpeed = MAX_SPEED * (boostActive ? BOOST_MULTIPLIER : 1.0);
-        
-        // Aplicar reducción de velocidad si lleva paquete pesado
-        if (carriedPackage != null && carriedPackage.reducesSpeed()) {
-            maxSpeed *= carriedPackage.getSpeedMultiplier();
-        }
-        
-        if (currentSpeed > maxSpeed) {
-            velocity.x = (velocity.x / currentSpeed) * maxSpeed;
-            velocity.y = (velocity.y / currentSpeed) * maxSpeed;
-        }
-    }
+    // [MVC] Métodos de comportamiento movidos a PhysicsService
+    // rotate() -> PhysicsService.applyRotation()
+    // emergencyBrake() -> PhysicsService.applyBrake()
+    // thrust() -> PhysicsService.applyThrust()
+    // limitSpeed() -> PhysicsService.limitSpeed()
     
     /**
      * Activa/desactiva el boost.
@@ -176,60 +108,27 @@ public class Ship {
         }
     }
     
-    /**
-     * Actualiza la posición de la nave, boost e inmunidad.
-     */
-    public void update() {
-        // Actualizar inmunidad
-        if (immune && System.currentTimeMillis() > immunityEndTime) {
-            immune = false;
-        }
-        
-        // Actualizar boost
-        if (boostActive && boost > 0) {
-            boost -= BOOST_CONSUMPTION / 60.0; // Ajustado para 60 FPS
-            if (boost <= 0) {
-                boost = 0;
-                boostActive = false;
-                canBoost = false; // No puede volver a activar hasta recargar al 50%
-            }
-        } else if (!boostActive && boost < MAX_BOOST) {
-            boost += BOOST_RECHARGE / 60.0; // Ajustado para 60 FPS
-            if (boost > MAX_BOOST) {
-                boost = MAX_BOOST;
-            }
-            // Permitir boost de nuevo al llegar al 50%
-            if (!canBoost && boost >= BOOST_RECHARGE_THRESHOLD) {
-                canBoost = true;
-            }
-        }
-        
-        // Aplicar fricción suave
-        velocity.x *= FRICTION;
-        velocity.y *= FRICTION;
-        
-        // Actualizar posición
-        position.x += velocity.x;
-        position.y += velocity.y;
-    }
+    // [MVC] Lógica de actualización movida a PhysicsService.updateShipPhysics()
     
     /**
      * Recibe un golpe. Reduce vidas y activa inmunidad temporal.
+     * [MVC] Tiempo inyectado como parámetro.
      */
-    public void takeHit() {
+    public void takeHit(long currentTime) {
         if (!immune && lives > 0) {
             lives--;
             immune = true;
-            immunityEndTime = System.currentTimeMillis() + IMMUNITY_DURATION_MS;
+            immunityEndTime = currentTime + IMMUNITY_DURATION_MS;
         }
     }
     
     /**
      * Recibe múltiples golpes (para asteroides medianos).
+     * [MVC] Tiempo inyectado como parámetro.
      */
-    public void takeHit(int damage) {
+    public void takeHit(int damage, long currentTime) {
         for (int i = 0; i < damage; i++) {
-            takeHit();
+            takeHit(currentTime);
             if (lives <= 0) break;
         }
     }
@@ -319,6 +218,17 @@ public class Ship {
         return immune;
     }
     
+    /**
+     * Verifica y actualiza el estado de inmunidad.
+     * [MVC] Tiempo inyectado como parámetro.
+     */
+    public boolean isImmune(long currentTime) {
+        if (immune && currentTime >= immunityEndTime) {
+            immune = false;
+        }
+        return immune;
+    }
+    
     public double getRotationAngle() {
         return rotationAngle;
     }
@@ -329,11 +239,11 @@ public class Ship {
     
     /**
      * Intenta disparar un proyectil.
+     * [MVC] Tiempo inyectado como parámetro.
      */
-    public Projectile shoot() {
-        long now = System.currentTimeMillis();
-        if (now - lastShotTime >= SHOT_COOLDOWN_MS) {
-            lastShotTime = now;
+    public Projectile shoot(long currentTime) {
+        if (currentTime - lastShotTime >= SHOT_COOLDOWN_MS) {
+            lastShotTime = currentTime;
             // Crear proyectil en la punta de la nave
             double tipX = position.x + Math.cos(rotationAngle) * 15;
             double tipY = position.y + Math.sin(rotationAngle) * 15;
@@ -344,9 +254,10 @@ public class Ship {
     
     /**
      * Verifica si puede disparar.
+     * [MVC] Tiempo inyectado como parámetro.
      */
-    public boolean canShoot() {
-        return System.currentTimeMillis() - lastShotTime >= SHOT_COOLDOWN_MS;
+    public boolean canShoot(long currentTime) {
+        return currentTime - lastShotTime >= SHOT_COOLDOWN_MS;
     }
     
 
@@ -421,5 +332,71 @@ public class Ship {
      */
     public double getVelY() {
         return velocity.y;
+    }
+    
+    // ===== SETTERS PARA SERVICES LAYER =====
+    
+    /**
+     * Establece número de vidas.
+     */
+    public void setLives(int lives) {
+        this.lives = Math.max(0, Math.min(lives, MAX_LIVES));
+    }
+    
+    /**
+     * Establece estado de inmunidad.
+     */
+    public void setImmune(boolean immune) {
+        this.immune = immune;
+    }
+    
+    /**
+     * Establece tiempo de fin de inmunidad.
+     */
+    public void setImmunityEndTime(long immunityEndTime) {
+        this.immunityEndTime = immunityEndTime;
+    }
+    
+    /**
+     * Obtiene tiempo de fin de inmunidad.
+     */
+    public long getImmunityEndTime() {
+        return immunityEndTime;
+    }
+    
+    /**
+     * Establece velocidad.
+     */
+    public void setVelocity(double vx, double vy) {
+        this.velocity.x = vx;
+        this.velocity.y = vy;
+    }
+    
+    /**
+     * Establece ángulo de rotación en radianes.
+     */
+    public void setRotationAngle(double angle) {
+        this.rotationAngle = angle;
+    }
+    
+    /**
+     * Establece paquete transportado.
+     */
+    public void setCarriedPackage(model.Package pkg) {
+        this.carriedPackage = pkg;
+    }
+    
+    /**
+     * [BUG FIX] Establece el nivel de boost.
+     */
+    public void setBoost(double boost) {
+        this.boost = Math.max(0, Math.min(100.0, boost));
+    }
+    
+    /**
+     * [BUG FIX] Establece si puede activar el boost.
+     */
+    public void setCanBoost(boolean canBoost) {
+        this.canBoost = canBoost;
     }
 }

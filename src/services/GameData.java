@@ -1,4 +1,4 @@
-package model.generators;
+package services;
 
 import java.awt.Point;
 import java.util.List;
