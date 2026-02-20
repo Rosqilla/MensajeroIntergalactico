@@ -229,45 +229,39 @@ Cada nivel genera 2-4 objetivos de misión automáticamente:
 
 El juego usa **sprite sheets** para renderizado eficiente de animaciones:
 
-### 💥 Explosión Sprite Sheet (8x8 Grid)
+### 💥 Explosión Sprite Sheet (Tira Horizontal 1×11)
 
-**Archivo**: `resources/sprites/explosion/explosion.png`
+**Archivo**: `resources/sprites/explosion/Explosion Animation.png`
 
 **Cómo se construye el sprite sheet:**
-1. **Tamaño total**: 512×512 píxeles (imagen PNG con transparencia)
-2. **División en grid**: 8 columnas × 8 filas = 64 celdas posibles
-3. **Tamaño por frame**: 64×64 píxeles (512÷8 = 64)
-4. **Frames utilizados**: Solo los primeros **11 frames**
-   - Fila 0: Frames 0-7 (celdas 0-7)
-   - Fila 1: Frames 8-10 (celdas 8-10)
-   - El resto del grid (frames 11-63) no se usa pero está disponible
-
-**Estructura del archivo PNG:**
-```
-[0] [1] [2] [3] [4] [5] [6] [7]   ← Fila 0 (frames iniciales de explosión)
-[8] [9][10][--][--][--][--][--]   ← Fila 1 (frames finales + vacío)
-[--][--][--][--][--][--][--][--]   ← Filas 2-7 (no usadas, disponibles)
-...
-```
+1. **Tamaño total**: 704×64 píxeles (imagen PNG con transparencia)
+2. **Layout**: Tira horizontal de 11 frames contiguos (una sola fila)
+3. **Tamaño por frame**: 64×64 píxeles (704÷11 = 64)
+4. **Estructura del archivo PNG:**
+   ```
+   [Frame 0][Frame 1][Frame 2][Frame 3][Frame 4][Frame 5][Frame 6][Frame 7][Frame 8][Frame 9][Frame 10]
+   ```
 
 **Secuencia de animación:**
 - Frame 0-2: Inicio de explosión (pequeña)
-- Frame 3-6: Expansión máxima (grande, brillante)
+- Frame 3-6: Expansión máxima (grande, brillante)  
 - Frame 7-10: Disipación (se desvanece)
 - FPS: 30 frames por segundo → animación dura ~0.37 segundos
 
 **Algoritmo de extracción:**
 ```java
-// Calcula posición en el grid 8×8
-int row = frameIndex / 8;
-int col = frameIndex % 8;
+// Extrae cada frame de la tira horizontal
+int frameWidth = 64;
+int frameHeight = 64;
 
-// Extrae subimagen de 64×64
-BufferedImage frame = spriteSheet.getSubimage(
-    col * 64,  // X = columna * tamaño
-    row * 64,  // Y = fila * tamaño
-    64, 64     // Width, Height
-);
+for (int i = 0; i < 11; i++) {
+    BufferedImage frame = spriteSheet.getSubimage(
+        i * frameWidth,  // X offset (se mueve horizontalmente)
+        0,               // Y = 0 (fila única)
+        frameWidth,      // 64px
+        frameHeight      // 64px
+    );
+}
 ```
 
 **Escalado dinámico:**
@@ -279,18 +273,19 @@ double scale = asteroidRadius / 25.0;
 // Grande  (40px): scale = 1.6 → explosión 102×102
 ```
 
-### 🔥 Trail Sprite Sheet (1×8)
+### 🔥 Trail Sprite Sheet (Tira Horizontal 1×8)
 
-**Archivo**: `resources/sprites/trail/fire_trail.png`
+**Archivo**: `resources/sprites/trail/Group 4 - 4.png`
 
 **Cómo se construye el sprite sheet:**
-1. **Layout**: Tira horizontal de 8 frames contiguos
-2. **Dimensiones típicas**: Por ejemplo 256×32 (8 frames de 32×32)
-3. **Estructura del archivo PNG:**
+1. **Layout**: Tira horizontal de 8 frames contiguos (una sola fila)
+2. **Dimensiones reales**: 256×48 píxeles
+3. **Tamaño por frame**: 32×48 píxeles (256÷8 = 32)
+4. **Estructura del archivo PNG:**
    ```
    [Frame 0][Frame 1][Frame 2][Frame 3][Frame 4][Frame 5][Frame 6][Frame 7]
    ```
-4. **Contenido de cada frame:**
+5. **Contenido de cada frame:**
    - Frame 0: Llama pequeña/inicio
    - Frame 1-3: Llama creciendo (intensidad aumenta)
    - Frame 4-5: Llama máxima (más brillante)
@@ -298,16 +293,21 @@ double scale = asteroidRadius / 25.0;
 
 **Extracción de frames:**
 ```java
-int frameWidth = trailImage.getWidth() / 8;
+// Extrae cada frame de la tira horizontal (igual que explosión)
+int frameWidth = trailImage.getWidth() / 8;  // 256 ÷ 8 = 32
+
 for (int i = 0; i < 8; i++) {
     trailFrames[i] = trailImage.getSubimage(
-        i * frameWidth,  // X offset
-        0,               // Y = 0 (fila única)
-        frameWidth,      // Width
-        trailImage.getHeight()  // Full height
+        i * frameWidth,            // X offset (0, 32, 64, 96...)
+        0,                         // Y = 0 (fila única)
+        frameWidth,                // 32px
+        trailImage.getHeight()     // 48px
     );
 }
 ```
+
+**Similitud con el sprite de explosión:**
+Ambos sprite sheets (explosión y trail) usan **el mismo patrón**: tiras horizontales con frames contiguos. La única diferencia es el número de frames (11 vs 8) y el tamaño de cada frame.
 
 **Renderizado con ciclo de animación:**
 ```java
